@@ -168,8 +168,26 @@ def tensor_map(
         in_shape: Shape,
         in_strides: Strides,
     ) -> None:
-        raise NotImplementedError("Need to include this file from past assignment.")
+        # TODO: Implement for Task 3.1.
+        # raise NotImplementedError("Need to implement for Task 3.1")
+    #     When out and in are stride-aligned, avoid indexing
+        if np.array_equal(out_strides, in_strides):
+            for i in range(len(out)):
+                out[i] = fn(in_storage[i])
 
+        else:
+            out_index = np.array([0] * len(out_shape))
+            in_index = np.array([0] * len(in_shape))
+            # Main loop in parallel
+            # All indices use numpy buffers
+            for i in prange(len(out)):
+                to_index(i, out_shape, out_index)
+                broadcast_index(out_index, out_shape, in_shape, in_index)
+
+                # out_pos = index_to_position(out_index, out_strides)
+                in_pos = index_to_position(in_index, in_strides)
+
+                out[i] = fn(in_storage[in_pos])
     return njit(_map, parallel=True)  # type: ignore
 
 
@@ -207,8 +225,29 @@ def tensor_zip(
         b_shape: Shape,
         b_strides: Strides,
     ) -> None:
-        raise NotImplementedError("Need to include this file from past assignment.")
+        # TODO: Implement for Task 3.1.
+        # raise NotImplementedError("Need to implement for Task 3.1")
+        if np.array_equal(out_strides, a_strides) and np.array_equal(out_strides, b_strides):
+            for i in range(len(out)):
+                out[i] = fn(a_storage[i], b_storage[i])
 
+        else:
+            out_index = np.array([0] * len(out_shape))
+            a_index = np.array([0] * len(a_shape))
+            b_index = np.array([0] * len(b_shape))
+            # Main loop in parallel
+            # All indices use numpy buffers
+            for i in range(len(out)):
+                to_index(i, out_shape, out_index)
+
+                broadcast_index(out_index, out_shape, a_shape, a_index)
+                broadcast_index(out_index, out_shape, b_shape, b_index)
+
+                a_pos = index_to_position(a_index, a_strides)
+                b_pos = index_to_position(b_index, b_strides)
+
+                # out_pos = index_to_position(out_index, out_strides)
+                out[i] = fn(a_storage[a_pos], b_storage[b_pos])
     return njit(_zip, parallel=True)  # type: ignore
 
 
@@ -242,8 +281,22 @@ def tensor_reduce(
         a_strides: Strides,
         reduce_dim: int,
     ) -> None:
-        raise NotImplementedError("Need to include this file from past assignment.")
+        # TODO: Implement for Task 3.1.
+        # raise NotImplementedError("Need to implement for Task 3.1")
 
+        out_index = np.array([0] * out_shape)
+
+        for i in prange(len(out)):
+            to_index(i, out_shape, out_index)
+
+            # Inner - loop should not call any functions or write non - local variables
+            # 出现依赖关系，无法使用parallel loop优化
+            for j in range(a_shape[reduce_dim]):
+                # shape be same
+                a_index = out_index.copy()
+                a_index[reduce_dim] = j
+                pos = index_to_position(a_index, a_strides)
+                out[pos] = fn(out[pos], a_storage[pos])
     return njit(_reduce, parallel=True)  # type: ignore
 
 
@@ -293,8 +346,42 @@ def _tensor_matrix_multiply(
     a_batch_stride = a_strides[0] if a_shape[0] > 1 else 0
     b_batch_stride = b_strides[0] if b_shape[0] > 1 else 0
 
-    raise NotImplementedError("Need to include this file from past assignment.")
+    # TODO: Implement for Task 3.2.
+    # raise NotImplementedError("Need to implement for Task 3.2")
+    # 满足矩阵乘法
+    assert a_shape[-1] == b_shape[-2]
 
+    dim = a_shape[-1]
 
+    for i in prange(len(out)):
+        out_index = np.array([0] * len(out_shape))
+        to_index(i, out_shape, out_index)
+
+        # Inner loop should have no global writes,1 multiply.
+        # 我怎么理解这个要求呢？对结果累加和这个操作如果用全局变量写表示就会变成sum = sum + n,这显然是不可以用parallel loop依赖的。
+        # 为了可以使用parallel loop优化，使用一个n维数组，分成n步用parallel loop求结果，最后进行累加
+        res = [0] * dim
+        for d in prange(dim):
+            a_shape = out_shape.copy()
+            a_index = out_index.copy()
+            a_index[-1] = d
+
+            broadcast_index(out_index, out_shape, a_shape, a_index)
+            a_pos = index_to_position(a_index, a_strides)
+
+            b_shape = out_shape.copy()
+            b_index = out_index.copy()
+            b_index[-2] = d
+
+            broadcast_index(out_index, out_shape, b_shape, b_index)
+            b_pos = index_to_position(b_index, b_strides)
+
+            res[d] = a_storage[a_pos] + b_storage[b_pos]
+
+        total_sum = 0.0
+        for d in range(dim):
+            total_sum += res[d]
+
+        out[i] = total_sum
 tensor_matrix_multiply = njit(_tensor_matrix_multiply, parallel=True)
 assert tensor_matrix_multiply is not None
